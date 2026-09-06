@@ -3,10 +3,12 @@ import ast
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 
-# Load the dataset
-df = pd.read_csv('uicrit_public.csv')
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
-#Regression Target Columns
+# Load the dataset
+df = pd.read_csv(DATA_DIR / "uicrit_public.csv")
+
+# Regression Target Columns
 rating_columns = [
         "aesthetics_rating",
         "learnability",
@@ -15,8 +17,8 @@ rating_columns = [
         "design_quality_rating"
 ]
 
+# Parses list using ast to ensure no lines result in error state
 def parse_list(value):
-    """Return a list from a CSV field, or None when the field is invalid."""
     try:
         parsed = ast.literal_eval(value)
     except (ValueError, SyntaxError, TypeError):
@@ -24,8 +26,8 @@ def parse_list(value):
 
     return parsed if isinstance(parsed, list) else None
 
+# Cleans the dataset by removing roews in which there is a mismatch between number of comments and actual comments.
 def clean_list():
-    #Cleans the dataset by removing roews in which there is a mismatch between number of comments and actual comments.
     global df
     source_lists = df['comments_source'].map(parse_list)
     comment_lists = df['comments'].map(parse_list)
@@ -39,22 +41,39 @@ def clean_list():
     df = df.loc[valid_rows].copy()
 
     df = df.rename(columns={'efficency': 'efficiency'})
-    df.to_csv('uicrit_cleaned.csv', index=False)
+    df.to_csv(DATA_DIR / "uicrit_cleaned.csv", index=False)
 
-    rating_columns["aesthetics_rating"] = (df["aesthetics_rating"] - 1) / 9;
-    rating_columns["learnability"] = (df["learnability"] - 1) / 4;
-    rating_columns["efficiency"] = (df["efficiency"] - 1) / 4;
-    rating_columns["usability_rating"] = (df["usability_rating"] - 1) / 9;
-    rating_columns["design_quality_rating"] = (df["design_quality_rating"] - 1) / 9;
+    # Normalize columns
+    df["aesthetics_rating"] = (df["aesthetics_rating"] - 1) / 9
+    df["learnability"] = (df["learnability"] - 1) / 4
+    df["efficiency"] = (df["efficiency"] - 1) / 4
+    df["usability_rating"] = (df["usability_rating"] - 1) / 9
+    df["design_quality_rating"] = (df["design_quality_rating"] - 1) / 9
 
     print(f'Removed {invalid_row_count} rows with invalid or mismatched comments.')
     print(f'Cleaned dataset: {len(df)} rows')
 
+def convert_screenshot():
+    image_directory = Path(DATA_DIR / "rico_screenshots")
+
+    image_paths = {
+        path.stem: str(path)
+        for path in image_directory.rglob("*")
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    }
+
+    screen_labels["image_path"] = (
+        screen_labels["rico_id"]
+        .astype(str)
+        .map(image_paths)
+    )
+
+    print("Missing screenshots:", screen_labels["image_path"].isna().sum())
+
+    screen_labels = screen_labels.dropna(subset=["image_path"])
+
 
 def train_test_split_data(test_size=0.2, random_state=42):
-    """Split the dataset into training and testing sets."""
-
-
     X = df[rating_columns]
     y = df[rating_columns]
 
