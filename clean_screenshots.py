@@ -34,7 +34,7 @@ def find_unmatched_files(valid_ids: set[str], combined_dir: Path) -> list[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description = "Remove combined assets whose Rico ID is absent from uicrit_public.csv."
+        description = "Remove Rico assets whose Rico ID is absent from uicrit_public.csv."
     )
     parser.add_argument(
         "--delete",
@@ -46,7 +46,7 @@ def main() -> None:
     if not CSV_PATH.is_file():
         raise FileNotFoundError(f"CSV not found: {CSV_PATH}")
     if not COMBINED_DIR.is_dir():
-        raise FileNotFoundError(f"Combined directory not found: {COMBINED_DIR}")
+        raise FileNotFoundError(f"Rico screenshots directory not found: {COMBINED_DIR}")
 
     valid_ids = load_rico_ids(CSV_PATH)
     unmatched_files = find_unmatched_files(valid_ids, COMBINED_DIR)

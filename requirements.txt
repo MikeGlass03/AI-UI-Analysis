@@ -1,0 +1,5 @@
+pandas
+Pillow
+torch
+torchvision
+scikit-learn
