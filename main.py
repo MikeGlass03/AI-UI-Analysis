@@ -7,6 +7,7 @@ from torchvision.models import ResNet18_Weights, resnet18
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 
+import clean_screenshots
 from image_conversion import UICritImageDataset
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -84,6 +85,14 @@ def train_model(dataframe, epochs=5, batch_size=32, learning_rate=1e-3):
     return model
 
 def main():
+    if not IMAGE_DIR.exists():
+        print(f"Missing image directory: {IMAGE_DIR}. Would you like to run clean_screenshots.py to download and clean the Rico dataset? (y/n)")
+        response = input().strip().lower()
+        if response == "y":
+            clean_screenshots.main(["--download"])
+        else:
+            print("Unable to run without Rico screenshots. To manually download, see README instructions.")
+            return
     dataframe = load_cleaned_data()
     print(f"Using {len(dataframe)} rows with available screenshots")
     train_model(dataframe)
