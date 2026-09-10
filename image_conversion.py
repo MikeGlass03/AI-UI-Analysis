@@ -26,6 +26,7 @@ image_transforms = v2.Compose([
     v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Standard Values for normalization in PyTorch stuff
 ])
 
+# Loads images and targets, transforming both to be used with Pytorch 
 class UICritImageDataset(Dataset):
     def __init__(self, dataframe, transform=image_transforms):
         self.dataframe = dataframe.reset_index(drop=True)
