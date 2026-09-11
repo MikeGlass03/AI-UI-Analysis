@@ -24,9 +24,7 @@ def load_cleaned_data() -> pd.DataFrame:
     has_image &= dataframe["image_path"].map(
         lambda path: isinstance(path, str) and (PROJECT_DIR / path).is_file()
     )
-    dataframe[TARGET_COLUMNS] = dataframe[TARGET_COLUMNS].apply(
-        pd.to_numeric, errors="coerce"
-    )
+    dataframe[TARGET_COLUMNS] = dataframe[TARGET_COLUMNS].apply(pd.to_numeric, errors="coerce")
     has_finite_targets = np.isfinite(dataframe[TARGET_COLUMNS]).all(axis=1)
     valid_rows = has_image & has_finite_targets
     dropped_rows = (~valid_rows).sum()
@@ -56,11 +54,12 @@ def build_model() -> nn.Module:
 def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
     # Some screenshots have the same rico_id, this makes sure that all screenshots with the same rico_id are in the same split
     first_split = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
-    train_indices, test_indices = next(first_split.split(dataframe, groups=dataframe["rico_id"]))
+    train_val_indices, test_indices = next(first_split.split(dataframe, groups=dataframe["rico_id"]))
     
     second_split = GroupShuffleSplit(n_splits=1, test_size=0.1765, random_state=43)
-    train_indices, validation_indices = next(second_split.split(dataframe.iloc[test_indices], groups=dataframe.iloc[test_indices]["rico_id"]))
-    test_indices = dataframe.iloc[test_indices].index
+    train_relative_indices, validation_relative_indices = next(second_split.split(dataframe.iloc[train_val_indices], groups=dataframe.iloc[train_val_indices]["rico_id"]))
+    train_indices = train_val_indices[train_relative_indices]
+    validation_indices = train_val_indices[validation_relative_indices]
 
     train_dataframe = dataframe.iloc[train_indices]
     validation_dataframe = dataframe.iloc[validation_indices]
@@ -114,10 +113,10 @@ def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
 
         print(
             f"Epoch {epoch + 1}/{epochs} | "
-            f"train loss: {training_loss / len(train_dataframe):.4f} | "
-            f"test loss: {test_loss / len(test_dataframe):.4f} | "
-            f"validation loss: {validation_loss / len(validation_dataframe):.4f} | "
-            f"\nper target test loss: "
+            f"Train loss: {training_loss / len(train_dataframe):.4f} | "
+            f"Test loss: {test_loss / len(test_dataframe):.4f} | "
+            f"Validation loss: {validation_loss / len(validation_dataframe):.4f} | "
+            f"\nPer target test loss: "
             f"{dict(zip(TARGET_COLUMNS, (float(round(value, 4)) for value in per_target_test_loss)))}"
         )
 
