@@ -7,20 +7,9 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
-def square_crop(image):
-    # Crops the given image to a square by adding white padding if necessary (most likely necessary for most Rico Screenshots).
-    width, height = image.size
-    side = max(width, height)
-
-    # Create a new square image with a white background
-    square = Image.new("RGB", (side, side), (255, 255, 255))
-    square.paste(image, ((side - width) // 2, (side - height) // 2))
-    return square
-
 # Transform the image then convert to a tensor and normalize it to be used with Pytorch
 image_transforms = v2.Compose([
-    v2.Lambda(square_crop),
-    v2.Resize((224, 224)),
+    v2.Resize((224, 160)),
     v2.ToImage(),
     v2.ToDtype(torch.float32, scale=1.0),
     v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Standard Values for normalization in PyTorch stuff

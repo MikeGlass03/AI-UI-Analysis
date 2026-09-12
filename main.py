@@ -33,6 +33,10 @@ def load_cleaned_data() -> pd.DataFrame:
 
     return dataframe.loc[valid_rows].reset_index(drop=True)
 
+# I think this will optimize results better, because there are 1-3 ratings per screenshot
+def average_image_targets(dataframe):
+    return dataframe.groupby(["rico_id", "image_path"], as_index=False)[TARGET_COLUMNS].mean()
+
 # Builds transfer learning model using RestNet18 
 def build_model() -> nn.Module:
     model = resnet18(weights=ResNet18_Weights.DEFAULT)
@@ -51,6 +55,22 @@ def build_model() -> nn.Module:
     return model
 
 
+def evaluate_model(model, data_loader, device):
+    model.eval()
+    loss_function = nn.MSELoss()
+    total_loss = 0.0
+    total_samples = 0
+
+    with torch.no_grad():
+        for images, targets in data_loader:
+            images, targets = images.to(device), targets.to(device)
+            predictions = model(images)
+            total_loss += loss_function(predictions, targets).item() * images.size(0)
+            total_samples += images.size(0)
+
+    return total_loss / total_samples
+
+
 def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
     # Some screenshots have the same rico_id, this makes sure that all screenshots with the same rico_id are in the same split
     first_split = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
@@ -61,9 +81,9 @@ def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
     train_indices = train_val_indices[train_relative_indices]
     validation_indices = train_val_indices[validation_relative_indices]
 
-    train_dataframe = dataframe.iloc[train_indices]
-    validation_dataframe = dataframe.iloc[validation_indices]
-    test_dataframe = dataframe.iloc[test_indices]
+    train_dataframe = average_image_targets(dataframe.iloc[train_indices])
+    validation_dataframe = average_image_targets(dataframe.iloc[validation_indices])
+    test_dataframe = average_image_targets(dataframe.iloc[test_indices])
     train_loader = DataLoader(UICritImageDataset(train_dataframe), batch_size=batch_size, shuffle=True)
     validation_loader = DataLoader(UICritImageDataset(validation_dataframe), batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(UICritImageDataset(test_dataframe), batch_size=batch_size)
@@ -77,6 +97,7 @@ def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
         ],
         weight_decay=1e-4,
     )
+    
     loss_function = nn.MSELoss()
     best_validation_loss = float('inf')
     best_model_state = None
@@ -120,11 +141,15 @@ def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
             f"{dict(zip(TARGET_COLUMNS, (float(round(value, 4)) for value in per_target_test_loss)))}"
         )
 
-        if validation_loss < best_validation_loss:
-            best_validation_loss = validation_loss
+        average_validation_loss = validation_loss / len(validation_dataframe)
+        
+        if average_validation_loss < best_validation_loss:
+            best_validation_loss = average_validation_loss
             best_model_state = copy.deepcopy(model.state_dict())
     
     model.load_state_dict(best_model_state)
+    final_test_loss = evaluate_model(model, test_loader, device)
+    print(f"Final test loss after training: {final_test_loss:.4f}")
     return model
 
 def main():
