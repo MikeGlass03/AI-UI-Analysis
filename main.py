@@ -16,7 +16,7 @@ from sklearn.preprocessing import StandardScaler
 from pathlib import Path
 
 import clean_screenshots
-from image_conversion import UICritImageDataset
+from image_conversion import DINOMultiFeatureEncoder, UICritImageDataset, CLIPImageEncoder 
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_DIR / "data"
@@ -166,34 +166,27 @@ def make_image_transform(size, mean, std):
     ])
 
 
-class CLIPImageEncoder(nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-
-    def forward(self, images):
-        outputs = self.model(
-            pixel_values=images,
-            interpolate_pos_encoding=True,
-        )
-        return outputs.image_embeds
-
-
 def create_feature_encoder(encoder_name, device):
     if encoder_name == "resnet18":
         encoder = resnet18(weights=ResNet18_Weights.DEFAULT)
         encoder.fc = nn.Identity()
 
         # None means use the existing transform from image_conversion.py.
-        transform = None
+        transform = make_image_transform(
+            size=(392, 224),
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
 
     elif encoder_name == "dinov2":
         # DINOv2-Small produces 384 features per screenshot.
-        encoder = torch.hub.load(
+        base_encoder = torch.hub.load(
             "facebookresearch/dinov2",
             "dinov2_vits14",
             trust_repo=True,
         )
+        
+        encoder = DINOMultiFeatureEncoder(base_encoder)
 
         # Both dimensions are divisible by DINOv2's 14-pixel patch size.
         # This also preserves the approximate portrait-screen aspect ratio.
@@ -558,7 +551,7 @@ def main():
     dataframe = load_cleaned_data()
     print(f"Using {len(dataframe)} rows with available screenshots")
     train_model(dataframe)
-    run_ridge_cross_validation(dataframe, encoder_name="clip", batch_size=8, n_splits=5)
+    run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, n_splits=5)
 
 if __name__ == "__main__":
     main()
