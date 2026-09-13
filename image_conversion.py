@@ -9,7 +9,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 
 # Transform the image then convert to a tensor and normalize it to be used with Pytorch
 image_transforms = v2.Compose([
-    v2.Resize((224, 160)),
+    v2.Resize((384, 216), antialias=True),
     v2.ToImage(),
     v2.ToDtype(torch.float32, scale=1.0),
     v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Standard Values for normalization in PyTorch stuff
