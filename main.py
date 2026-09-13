@@ -1,10 +1,14 @@
 import copy
+from pyexpat import features
 import pandas as pd
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.models import ResNet18_Weights, resnet18
+from torchvision.transforms import v2, InterpolationMode
+from transformers import CLIPVisionModelWithProjection, CLIPProcessor
+
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.linear_model import RidgeCV
 from sklearn.pipeline import make_pipeline
@@ -89,7 +93,8 @@ def extract_features(encoder, data_loader, device):
     with torch.no_grad():
         for images, batch_targets in data_loader:
             images = images.to(device)
-            features.append(encoder(images).cpu().numpy())
+            batch_features = encoder(images)
+            features.append(batch_features.float().cpu().numpy())
             targets.append(batch_targets.numpy())
 
     return np.concatenate(features), np.concatenate(targets)
@@ -148,65 +153,309 @@ def run_ridge_regression(dataframe, batch_size=32):
 
     return ridge
 
+def make_image_transform(size, mean, std):
+    return v2.Compose([
+        v2.Resize(
+            size,
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        ),
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize(mean=mean, std=std),
+    ])
 
-def run_ridge_cross_validation(dataframe, batch_size=32, n_splits=5):
+
+class CLIPImageEncoder(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, images):
+        outputs = self.model(
+            pixel_values=images,
+            interpolate_pos_encoding=True,
+        )
+        return outputs.image_embeds
+
+
+def create_feature_encoder(encoder_name, device):
+    if encoder_name == "resnet18":
+        encoder = resnet18(weights=ResNet18_Weights.DEFAULT)
+        encoder.fc = nn.Identity()
+
+        # None means use the existing transform from image_conversion.py.
+        transform = None
+
+    elif encoder_name == "dinov2":
+        # DINOv2-Small produces 384 features per screenshot.
+        encoder = torch.hub.load(
+            "facebookresearch/dinov2",
+            "dinov2_vits14",
+            trust_repo=True,
+        )
+
+        # Both dimensions are divisible by DINOv2's 14-pixel patch size.
+        # This also preserves the approximate portrait-screen aspect ratio.
+        transform = make_image_transform(
+            size=(392, 224),
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
+
+    elif encoder_name == "clip":
+
+        clip_model = CLIPVisionModelWithProjection.from_pretrained(
+            "openai/clip-vit-base-patch16"
+        )
+        encoder = CLIPImageEncoder(clip_model)
+
+        # Dimensions are divisible by CLIP's 16-pixel patch size.
+        transform = make_image_transform(
+            size=(384, 224),
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
+        )
+
+    else:
+        raise ValueError(f"Unknown encoder: {encoder_name}")
+
+    for parameter in encoder.parameters():
+        parameter.requires_grad = False
+
+    encoder = encoder.to(device)
+    encoder.eval()
+
+    return encoder, transform
+
+def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, n_splits=5):
     averaged_dataframe = average_image_targets(dataframe)
+
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+
+    encoder, transform = create_feature_encoder(
+        encoder_name,
+        device,
+    )
+
+    if transform is None:
+        dataset = UICritImageDataset(averaged_dataframe)
+    else:
+        dataset = UICritImageDataset(
+            averaged_dataframe,
+            transform=transform,
+        )
+
     data_loader = DataLoader(
-        UICritImageDataset(averaged_dataframe),
+        dataset,
         batch_size=batch_size,
         shuffle=False,
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    encoder = resnet18(weights=ResNet18_Weights.DEFAULT)
-    encoder.fc = nn.Identity()
-    encoder = encoder.to(device)
-    encoder.eval()
+    print(f"\nExtracting {encoder_name} features...")
 
-    features, targets = extract_features(encoder, data_loader, device)
+    features, targets = extract_features(
+        encoder,
+        data_loader,
+        device,
+    )
+
+    print(
+        f"Extracted {features.shape[1]} features "
+        f"for {features.shape[0]} screenshots"
+    )
+
     groups = averaged_dataframe["rico_id"].to_numpy()
     alphas = np.logspace(-4, 8, 37)
+
     splitter = GroupKFold(n_splits=n_splits)
+
+    # Ridge results
     fold_losses = []
     fold_per_target_losses = []
 
+    # Mean-baseline results
+    baseline_fold_losses = []
+    baseline_per_target_losses = []
+
     for fold, (train_indices, validation_indices) in enumerate(
-        splitter.split(features, targets, groups=groups), start=1
+        splitter.split(
+            features,
+            targets,
+            groups=groups,
+        ),
+        start=1,
     ):
+        # Train Ridge on this fold
         ridge = make_pipeline(
             StandardScaler(),
             RidgeCV(alphas=alphas, alpha_per_target=True),
         )
-        ridge.fit(features[train_indices], targets[train_indices])
-        predictions = ridge.predict(features[validation_indices])
-        errors = predictions - targets[validation_indices]
-        per_target_loss = np.mean(errors ** 2, axis=0)
-        fold_loss = float(np.mean(per_target_loss))
+
+        ridge.fit(
+            features[train_indices],
+            targets[train_indices],
+        )
+
+        # Evaluate Ridge
+        predictions = ridge.predict(
+            features[validation_indices]
+        )
+
+        errors = (
+            predictions
+            - targets[validation_indices]
+        )
+
+        per_target_loss = np.mean(
+            errors ** 2,
+            axis=0,
+        )
+
+        fold_loss = float(
+            np.mean(per_target_loss)
+        )
+
+        # Calculate mean-predictor baseline using
+        # only this fold's training targets
+        fold_train_targets = targets[train_indices]
+        fold_validation_targets = targets[validation_indices]
+
+        target_means = fold_train_targets.mean(axis=0)
+
+        baseline_predictions = np.tile(
+            target_means,
+            (len(validation_indices), 1),
+        )
+
+        baseline_errors = (
+            baseline_predictions
+            - fold_validation_targets
+        )
+
+        baseline_per_target_loss = np.mean(
+            baseline_errors ** 2,
+            axis=0,
+        )
+
+        baseline_loss = float(
+            np.mean(baseline_per_target_loss)
+        )
+
+        improvement = (
+            (baseline_loss - fold_loss)
+            / baseline_loss
+            * 100
+        )
+
+        # Save this fold's results
         fold_losses.append(fold_loss)
         fold_per_target_losses.append(per_target_loss)
 
-        print(
-            f"Ridge fold {fold}/{n_splits} | "
-            f"MSE: {fold_loss:.6f} | "
-            f"per target: "
-            f"{dict(zip(TARGET_COLUMNS, per_target_loss.round(6).tolist()))} | "
-            f"alphas: {ridge[-1].alpha_}"
+        baseline_fold_losses.append(baseline_loss)
+        baseline_per_target_losses.append(
+            baseline_per_target_loss
         )
 
-    mean_per_target_loss = np.mean(fold_per_target_losses, axis=0)
+        ridge_target_results = {
+            name: round(float(value), 6)
+            for name, value in zip(
+                TARGET_COLUMNS,
+                per_target_loss,
+            )
+        }
+
+        baseline_target_results = {
+            name: round(float(value), 6)
+            for name, value in zip(
+                TARGET_COLUMNS,
+                baseline_per_target_loss,
+            )
+        }
+
+        print(
+            f"Fold {fold}/{n_splits} | "
+            f"Baseline MSE: {baseline_loss:.6f} | "
+            f"Ridge MSE: {fold_loss:.6f} | "
+            f"Improvement: {improvement:.2f}%"
+        )
+
+        print(
+            f"Baseline per target: "
+            f"{baseline_target_results}"
+        )
+
+        print(
+            f"Ridge per target: "
+            f"{ridge_target_results}"
+        )
+
+        print(
+            f"Selected alphas: {ridge[-1].alpha_}"
+        )
+
+    # Calculate averages across all folds
+    mean_ridge_loss = float(np.mean(fold_losses))
+
+    mean_baseline_loss = float(np.mean(baseline_fold_losses))
+
+    overall_improvement = ((mean_baseline_loss - mean_ridge_loss) / mean_baseline_loss* 100)
+
+    mean_ridge_per_target = np.mean(fold_per_target_losses, axis=0)
+
+    mean_baseline_per_target = np.mean(baseline_per_target_losses, axis=0)
+
+    ridge_summary = {
+        name: round(float(value), 6)
+        for name, value in zip(
+            TARGET_COLUMNS,
+            mean_ridge_per_target,
+        )
+    }
+
+    baseline_summary = {
+        name: round(float(value), 6)
+        for name, value in zip(
+            TARGET_COLUMNS,
+            mean_baseline_per_target,
+        )
+    }
+
+    print("\nCross-validation summary")
+
     print(
-        f"Ridge {n_splits}-fold mean MSE: "
-        f"{np.mean(fold_losses):.6f} +/- {np.std(fold_losses):.6f}"
+        f"Mean baseline MSE: "
+        f"{mean_baseline_loss:.6f} "
+        f"+/- {np.std(baseline_fold_losses, ddof=1):.6f}"
     )
+
     print(
-        "Ridge mean per target MSE: "
-        f"{dict(zip(TARGET_COLUMNS, mean_per_target_loss.round(6).tolist()))}"
+        f"Mean Ridge MSE: "
+        f"{mean_ridge_loss:.6f} "
+        f"+/- {np.std(fold_losses, ddof=1):.6f}"
+    )
+
+    print(
+        f"Overall improvement over baseline: "
+        f"{overall_improvement:.2f}%"
+    )
+
+    print(
+        f"Mean baseline per target: "
+        f"{baseline_summary}"
+    )
+
+    print(
+        f"Mean Ridge per target: "
+        f"{ridge_summary}"
     )
 
     return fold_losses, fold_per_target_losses
 
 
-def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
+def train_model(dataframe, epochs=5, batch_size=32, learning_rate=1e-4):
     # Some screenshots have the same rico_id, this makes sure that all screenshots with the same rico_id are in the same split
     first_split = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
     train_val_indices, test_indices = next(first_split.split(dataframe, groups=dataframe["rico_id"]))
@@ -309,7 +558,7 @@ def main():
     dataframe = load_cleaned_data()
     print(f"Using {len(dataframe)} rows with available screenshots")
     train_model(dataframe)
-    run_ridge_cross_validation(dataframe)
+    run_ridge_cross_validation(dataframe, encoder_name="clip", batch_size=8, n_splits=5)
 
 if __name__ == "__main__":
     main()
