@@ -26,12 +26,13 @@ authors and are used according to their original terms.
 The best model used DINOv2-Small CLS and mean patch features with
 StandardScaler and RidgeCV.
 
-| Model                   | Mean CV MSE | Improvement from baseline |
-| Mean baseline           | 0.007385    | N/A                       |
-| ResNet18                | 0.007190    | 2.65%                     |
-| CLIP ViT-B/16           | 0.007207    | 2.42%                     |
-| DINOv2 CLS              | 0.007145    | 3.25%                     |
-| DINOv2 CLS + patch mean | 0.007124    | 3.53%                     |
+| Model | Mean CV MSE | Improvement from baseline |
+|---|---:|---:|
+| Mean baseline | 0.007385 | N/A |
+| ResNet18 | 0.007190 | 2.65% |
+| CLIP ViT-B/16 | 0.007207 | 2.42% |
+| DINOv2 CLS | 0.007145 | 3.25% |
+| DINOv2 CLS + patch mean | 0.007124 | 3.53% |
 
 Improvement is calculated relative to a fold-specific baseline that
 predicts the training fold's mean rating. All targets were normalized
@@ -70,17 +71,18 @@ original work from this repository.
 
 ### Expected data structure
 
-/AI-UI-Analysis
-| clean_screenshots.py
-| image_conversion.py
-| main.py
-    data/
-    | uicrit_cleaned.csv
-    | uicrit_public.csv
-    | rico_screenshots/
-        | [screenshot files] #Excluded from Github
-| README.md
-| requirements.txt
+```text
+AI-UI-Analysis/
+├── clean_screenshots.py
+├── image_conversion.py
+├── main.py
+├── data/
+│   ├── uicrit_cleaned.csv
+│   ├── uicrit_public.csv
+│   └── rico_screenshots/
+│       └── [screenshot files]  # Excluded from GitHub
+├── README.md
+└── requirements.txt
 
 ## Method
 
