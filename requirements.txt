@@ -1,6 +1,7 @@
-pandas
-Pillow
-torch
-torchvision
-scikit-learn
-transformers
+numpy==2.2.6
+pandas==2.3.3
+pillow==12.3.0
+scikit-learn==1.7.2
+torch==2.14.0
+torchvision==0.29.0
+transformers==5.17.0p

@@ -85,6 +85,7 @@ def evaluate_model(model, data_loader, device):
         per_target_squared_error / total_samples,
     )
 
+# Extracts features from the encoder for all images to be used on Ridge regression
 def extract_features(encoder, data_loader, device):
     features = []
     targets = []
@@ -100,6 +101,7 @@ def extract_features(encoder, data_loader, device):
     return np.concatenate(features), np.concatenate(targets)
 
 
+# Creates a feature encoder, using right now for testing highest loss between CLIP, DinoV2, and ResNet18. Current best: DinoV2 at 3.53%
 def run_ridge_regression(dataframe, batch_size=32):
     first_split = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
     train_val_indices, test_indices = next(
@@ -153,6 +155,7 @@ def run_ridge_regression(dataframe, batch_size=32):
 
     return ridge
 
+# Similar to function in image_conversion.py, remove later when cleaning file.
 def make_image_transform(size, mean, std):
     return v2.Compose([
         v2.Resize(
@@ -172,11 +175,7 @@ def create_feature_encoder(encoder_name, device):
         encoder.fc = nn.Identity()
 
         # None means use the existing transform from image_conversion.py.
-        transform = make_image_transform(
-            size=(392, 224),
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        )
+        transform = make_image_transform(size=(392, 224), mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     elif encoder_name == "dinov2":
         # DINOv2-Small produces 384 features per screenshot.
@@ -189,26 +188,14 @@ def create_feature_encoder(encoder_name, device):
         encoder = DINOMultiFeatureEncoder(base_encoder)
 
         # Both dimensions are divisible by DINOv2's 14-pixel patch size.
-        # This also preserves the approximate portrait-screen aspect ratio.
-        transform = make_image_transform(
-            size=(392, 224),
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        )
+        transform = make_image_transform(size=(392, 224), mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     elif encoder_name == "clip":
 
-        clip_model = CLIPVisionModelWithProjection.from_pretrained(
-            "openai/clip-vit-base-patch16"
-        )
+        clip_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch16")
         encoder = CLIPImageEncoder(clip_model)
 
-        # Dimensions are divisible by CLIP's 16-pixel patch size.
-        transform = make_image_transform(
-            size=(384, 224),
-            mean=[0.48145466, 0.4578275, 0.40821073],
-            std=[0.26862954, 0.26130258, 0.27577711],
-        )
+        transform = make_image_transform(size=(384, 224), mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711])
 
     else:
         raise ValueError(f"Unknown encoder: {encoder_name}")
@@ -222,38 +209,20 @@ def create_feature_encoder(encoder_name, device):
     return encoder, transform
 
 def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, n_splits=5):
+
     averaged_dataframe = average_image_targets(dataframe)
-
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
-
-    encoder, transform = create_feature_encoder(
-        encoder_name,
-        device,
-    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    encoder, transform = create_feature_encoder(encoder_name, device)
 
     if transform is None:
         dataset = UICritImageDataset(averaged_dataframe)
     else:
-        dataset = UICritImageDataset(
-            averaged_dataframe,
-            transform=transform,
-        )
+        dataset = UICritImageDataset(averaged_dataframe, transform=transform)
 
-    data_loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-    )
-
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     print(f"\nExtracting {encoder_name} features...")
 
-    features, targets = extract_features(
-        encoder,
-        data_loader,
-        device,
-    )
+    features, targets = extract_features(encoder, data_loader, device)
 
     print(
         f"Extracted {features.shape[1]} features "
@@ -282,34 +251,15 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
         start=1,
     ):
         # Train Ridge on this fold
-        ridge = make_pipeline(
-            StandardScaler(),
-            RidgeCV(alphas=alphas, alpha_per_target=True),
-        )
-
-        ridge.fit(
-            features[train_indices],
-            targets[train_indices],
-        )
+        ridge = make_pipeline(StandardScaler(), RidgeCV(alphas=alphas, alpha_per_target=True))
+        ridge.fit(features[train_indices], targets[train_indices])
 
         # Evaluate Ridge
-        predictions = ridge.predict(
-            features[validation_indices]
-        )
+        predictions = ridge.predict(features[validation_indices])
+        errors = (predictions - targets[validation_indices])
 
-        errors = (
-            predictions
-            - targets[validation_indices]
-        )
-
-        per_target_loss = np.mean(
-            errors ** 2,
-            axis=0,
-        )
-
-        fold_loss = float(
-            np.mean(per_target_loss)
-        )
+        per_target_loss = np.mean(errors ** 2, axis=0)
+        fold_loss = float(np.mean(per_target_loss))
 
         # Calculate mean-predictor baseline using
         # only this fold's training targets
@@ -318,40 +268,21 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
 
         target_means = fold_train_targets.mean(axis=0)
 
-        baseline_predictions = np.tile(
-            target_means,
-            (len(validation_indices), 1),
-        )
+        baseline_predictions = np.tile(target_means, (len(validation_indices), 1))
+        baseline_errors = (baseline_predictions - fold_validation_targets)
+        baseline_per_target_loss = np.mean(baseline_errors ** 2, axis=0)
+        baseline_loss = float(np.mean(baseline_per_target_loss))
 
-        baseline_errors = (
-            baseline_predictions
-            - fold_validation_targets
-        )
+        improvement = ((baseline_loss - fold_loss) / baseline_loss * 100)
 
-        baseline_per_target_loss = np.mean(
-            baseline_errors ** 2,
-            axis=0,
-        )
-
-        baseline_loss = float(
-            np.mean(baseline_per_target_loss)
-        )
-
-        improvement = (
-            (baseline_loss - fold_loss)
-            / baseline_loss
-            * 100
-        )
-
-        # Save this fold's results
+        # Save best fold's results
         fold_losses.append(fold_loss)
         fold_per_target_losses.append(per_target_loss)
 
         baseline_fold_losses.append(baseline_loss)
-        baseline_per_target_losses.append(
-            baseline_per_target_loss
-        )
+        baseline_per_target_losses.append(baseline_per_target_loss)
 
+        # Save ridge results for display, add way to save best result later
         ridge_target_results = {
             name: round(float(value), 6)
             for name, value in zip(
@@ -360,6 +291,7 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
             )
         }
 
+        # Save baseline results for display
         baseline_target_results = {
             name: round(float(value), 6)
             for name, value in zip(
@@ -391,13 +323,9 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
 
     # Calculate averages across all folds
     mean_ridge_loss = float(np.mean(fold_losses))
-
     mean_baseline_loss = float(np.mean(baseline_fold_losses))
-
     overall_improvement = ((mean_baseline_loss - mean_ridge_loss) / mean_baseline_loss* 100)
-
     mean_ridge_per_target = np.mean(fold_per_target_losses, axis=0)
-
     mean_baseline_per_target = np.mean(baseline_per_target_losses, axis=0)
 
     ridge_summary = {
@@ -470,13 +398,15 @@ def train_model(dataframe, epochs=5, batch_size=32, learning_rate=1e-4):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(target_means).to(device)
-    
+
+    # AdamW yields the best results for optimizer, as expected
     optimizer = torch.optim.AdamW(
         model.fc.parameters(),
         lr=learning_rate,
         weight_decay=0.05,
     )
-    
+
+    # Best schedular so far was ReduceLROnPlateau
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode="min",
