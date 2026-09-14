@@ -83,6 +83,7 @@ AI-UI-Analysis/
 │       └── [screenshot files]  # Excluded from GitHub
 ├── README.md
 └── requirements.txt
+'''
 
 ## Method
 
