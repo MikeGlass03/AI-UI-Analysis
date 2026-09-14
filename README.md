@@ -71,16 +71,16 @@ original work from this repository.
 ### Expected data structure
 
 /AI-UI-Analysis
-├── clean_screenshots.py
-├── image_conversion.py
-├── main.py
+| clean_screenshots.py
+| image_conversion.py
+| main.py
     data/
-    ├── uicrit_cleaned.csv
-    ├── uicrit_public.csv
-    └── rico_screenshots/
-        ├── [screenshot files] #Excluded from Github
-README.md
-requirements.txt
+    | uicrit_cleaned.csv
+    | uicrit_public.csv
+    | rico_screenshots/
+        | [screenshot files] #Excluded from Github
+| README.md
+| requirements.txt
 
 ## Method
 
