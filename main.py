@@ -261,8 +261,6 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
         per_target_loss = np.mean(errors ** 2, axis=0)
         fold_loss = float(np.mean(per_target_loss))
 
-        # Calculate mean-predictor baseline using
-        # only this fold's training targets
         fold_train_targets = targets[train_indices]
         fold_validation_targets = targets[validation_indices]
 
@@ -282,7 +280,6 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
         baseline_fold_losses.append(baseline_loss)
         baseline_per_target_losses.append(baseline_per_target_loss)
 
-        # Save ridge results for display, add way to save best result later
         ridge_target_results = {
             name: round(float(value), 6)
             for name, value in zip(
@@ -290,8 +287,6 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
                 per_target_loss,
             )
         }
-
-        # Save baseline results for display
         baseline_target_results = {
             name: round(float(value), 6)
             for name, value in zip(
