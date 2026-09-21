@@ -371,7 +371,7 @@ def run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, 
     return fold_losses, fold_per_target_losses
 
 
-def train_model(dataframe, epochs=5, batch_size=32, learning_rate=1e-4):
+def train_model(dataframe, epochs=15, batch_size=32, learning_rate=1e-4):
     # Some screenshots have the same rico_id, this makes sure that all screenshots with the same rico_id are in the same split
     first_split = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
     train_val_indices, test_indices = next(first_split.split(dataframe, groups=dataframe["rico_id"]))
