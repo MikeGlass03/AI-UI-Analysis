@@ -2,7 +2,7 @@
 
 This project evaluates whether pretrained computer-vision representations
 can predict human-rated UI quality from screenshots. The project compares
-ResNet18, CLIP ViT-B/16, and Dinov2 image features using Ridge regression
+ResNet18, CLIP ViT-B/16, and DINOv2 image features using Ridge regression
 across learnability, efficiency, and overall design targets.
 
 The central idea is that human-based ratings of various different metrics
@@ -51,7 +51,7 @@ a UI screenshot to predict:
 
 Success in this project would allow for screenshots to be submitted
 to this model to get a review of user interfaces. This requires the
-CNN models being trained on to generalize to this specific set of
+models being trained on to generalize to this specific set of
 UI screenshots and the associated human ratings given to them.
 
 ## Dataset
@@ -129,7 +129,7 @@ python -m venv .venv
 
 pip install -r requirements.txt
 python main.py
-
+```
 To change the encoder being used, edit line 484:
 
 run_ridge_cross_validation(dataframe, encoder_name="dinov2", batch_size=32, n_splits=5)

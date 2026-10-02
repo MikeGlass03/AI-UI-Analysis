@@ -1,5 +1,4 @@
 import copy
-from pyexpat import features
 import pandas as pd
 import numpy as np
 import torch
@@ -99,61 +98,6 @@ def extract_features(encoder, data_loader, device):
             targets.append(batch_targets.numpy())
 
     return np.concatenate(features), np.concatenate(targets)
-
-
-# Creates a feature encoder, using right now for testing highest loss between CLIP, DinoV2, and ResNet18. Current best: DinoV2 at 3.53%
-def run_ridge_regression(dataframe, batch_size=32):
-    first_split = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
-    train_val_indices, test_indices = next(
-        first_split.split(dataframe, groups=dataframe["rico_id"])
-    )
-    second_split = GroupShuffleSplit(n_splits=1, test_size=0.1765, random_state=43)
-    train_relative_indices, validation_relative_indices = next(
-        second_split.split(
-            dataframe.iloc[train_val_indices],
-            groups=dataframe.iloc[train_val_indices]["rico_id"],
-        )
-    )
-    train_indices = train_val_indices[train_relative_indices]
-    validation_indices = train_val_indices[validation_relative_indices]
-
-    train_dataframe = average_image_targets(dataframe.iloc[train_indices])
-    validation_dataframe = average_image_targets(dataframe.iloc[validation_indices])
-    test_dataframe = average_image_targets(dataframe.iloc[test_indices])
-
-    train_loader = DataLoader(UICritImageDataset(train_dataframe), batch_size=batch_size, shuffle=False)
-    validation_loader = DataLoader(UICritImageDataset(validation_dataframe), batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(UICritImageDataset(test_dataframe), batch_size=batch_size, shuffle=False)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    encoder = resnet18(weights=ResNet18_Weights.DEFAULT)
-    encoder.fc = nn.Identity()
-    encoder = encoder.to(device)
-    encoder.eval()
-
-    train_features, train_targets = extract_features(encoder, train_loader, device)
-    validation_features, validation_targets = extract_features(encoder, validation_loader, device)
-    test_features, test_targets = extract_features(encoder, test_loader, device)
-
-    alphas = np.logspace(-4, 8, 37)
-    ridge = make_pipeline(
-        StandardScaler(),
-        RidgeCV(alphas=alphas, alpha_per_target=True),
-    )
-    ridge.fit(train_features, train_targets)
-
-    validation_predictions = ridge.predict(validation_features)
-    test_predictions = ridge.predict(test_features)
-    validation_loss = np.mean((validation_predictions - validation_targets) ** 2)
-    test_loss = np.mean((test_predictions - test_targets) ** 2)
-    per_target_test_loss = np.mean((test_predictions - test_targets) ** 2, axis=0)
-
-    print(f"Ridge validation loss: {validation_loss:.6f}")
-    print(f"Ridge test loss: {test_loss:.6f}")
-    print("Ridge per target test loss: "f"{dict(zip(TARGET_COLUMNS, per_target_test_loss.round(6).tolist()))}")
-    print(f"Ridge selected alphas: {ridge[-1].alpha_}")
-
-    return ridge
 
 # Similar to function in image_conversion.py, remove later when cleaning file.
 def make_image_transform(size, mean, std):
